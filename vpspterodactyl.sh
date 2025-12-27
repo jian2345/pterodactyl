@@ -1,5 +1,3 @@
-#!/bin/bash
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -34,7 +32,7 @@ show_banner() {
  ╚╝ ╩  ╚═╝  ╚═╝╝╚╝╩═╝ ╩ 
 EOF
     echo -e "${PURPLE}────────────────────────────────────────${NC}"
-    echo -e "${WHITE}  PTERODACTYL AUTO INSTALLER V3.0${NC}"
+    echo -e "${WHITE}  PTERODACTYL AUTO INSTALLER V3.1${NC}"
     echo -e "${YELLOW}  Created By: JianOffc${NC}"
     echo -e "${PURPLE}────────────────────────────────────────${NC}\n"
 }
@@ -296,31 +294,31 @@ install_panel() {
     sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no root@$VPS_IP bash << ENDSSH
 export DEBIAN_FRONTEND=noninteractive
 
-echo "[1/12] Updating system..."
+echo "[1/15] Updating system..."
 apt update -y > /dev/null 2>&1
 apt upgrade -y > /dev/null 2>&1
 
-echo "[2/12] Installing dependencies..."
+echo "[2/15] Installing dependencies..."
 apt install -y software-properties-common curl apt-transport-https ca-certificates gnupg > /dev/null 2>&1
 
-echo "[3/12] Adding PHP repository..."
+echo "[3/15] Adding PHP repository..."
 LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1
 apt update -y > /dev/null 2>&1
 
-echo "[4/12] Installing PHP and extensions..."
+echo "[4/15] Installing PHP and extensions..."
 apt install -y php8.2 php8.2-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip} > /dev/null 2>&1
 
-echo "[5/12] Installing Composer..."
+echo "[5/15] Installing Composer..."
 curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer > /dev/null 2>&1
 
-echo "[6/12] Installing MariaDB..."
+echo "[6/15] Installing MariaDB..."
 curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash > /dev/null 2>&1
 apt install -y mariadb-server > /dev/null 2>&1
 
-echo "[7/12] Installing Nginx, Redis, Certbot..."
+echo "[7/15] Installing Nginx, Redis, Certbot..."
 apt install -y nginx redis-server certbot python3-certbot-nginx > /dev/null 2>&1
 
-echo "[8/12] Configuring database..."
+echo "[8/15] Configuring database..."
 mysql -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';" 2>/dev/null
 mysql -e "DROP USER IF EXISTS 'pterodactyl'@'localhost';" 2>/dev/null
 mysql -e "DROP DATABASE IF EXISTS panel;" 2>/dev/null
@@ -331,7 +329,7 @@ mysql -e "CREATE USER 'pterodactyl'@'localhost' IDENTIFIED BY '${DB_PASS}';"
 mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'localhost';"
 mysql -e "FLUSH PRIVILEGES;"
 
-echo "[9/12] Downloading Pterodactyl Panel..."
+echo "[9/15] Downloading Pterodactyl Panel..."
 mkdir -p /var/www/pterodactyl
 cd /var/www/pterodactyl
 curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz 2>/dev/null
@@ -340,14 +338,14 @@ chmod -R 755 storage/* bootstrap/cache/ 2>/dev/null
 cp .env.example .env
 composer install --no-dev --optimize-autoloader --no-interaction > /dev/null 2>&1
 
-echo "[10/12] Configuring Panel..."
+echo "[10/15] Configuring Panel..."
 php artisan key:generate --force > /dev/null 2>&1
 APPKEY=\$(php artisan key:generate --show)
 
-cat > .env << EOF
+cat > .env << 'ENVFILE'
 APP_ENV=production
 APP_DEBUG=false
-APP_KEY=\${APPKEY}
+APP_KEY=${APPKEY}
 APP_TIMEZONE=UTC
 APP_URL=https://${PANEL_DOMAIN}
 DB_HOST=localhost
@@ -364,95 +362,120 @@ QUEUE_CONNECTION=redis
 RECAPTCHA_ENABLED=false
 RECAPTCHA_SECRET_KEY=
 RECAPTCHA_WEBSITE_KEY=
-EOF
+ENVFILE
+
+sed -i "s/\\\${APPKEY}/\${APPKEY}/g" .env
+sed -i "s/\\\${PANEL_DOMAIN}/${PANEL_DOMAIN}/g" .env
+sed -i "s/\\\${DB_PASS}/${DB_PASS}/g" .env
 
 php artisan migrate --seed --force > /dev/null 2>&1
 php artisan p:user:make --email=admin@${PANEL_DOMAIN} --username=${ADMIN_USER} --name-first=Admin --name-last=Panel --password=${ADMIN_PASS} --admin=1 --no-interaction > /dev/null 2>&1
 chown -R www-data:www-data /var/www/pterodactyl/*
 
-echo "[11/12] Configuring Nginx..."
-cat > /etc/nginx/sites-available/pterodactyl.conf << 'NGINX'
+echo "[11/15] Configuring Nginx..."
+cat > /etc/nginx/sites-available/pterodactyl.conf << 'NGINXCONF'
 server {
-listen 80;
-server_name ${PANEL_DOMAIN};
-root /var/www/pterodactyl/public;
-index index.php;
-client_max_body_size 100m;
-location / { try_files \$uri \$uri/ /index.php?\$query_string; }
-location ~ \.php$ {
-fastcgi_pass unix:/run/php/php8.2-fpm.sock;
-fastcgi_index index.php;
-include fastcgi_params;
-fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    listen 80;
+    server_name ${PANEL_DOMAIN};
+    root /var/www/pterodactyl/public;
+    index index.php;
+    client_max_body_size 100m;
+    
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+    
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
 }
-}
-NGINX
+NGINXCONF
+
+sed -i "s/\\\${PANEL_DOMAIN}/${PANEL_DOMAIN}/g" /etc/nginx/sites-available/pterodactyl.conf
 
 rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
+nginx -t > /dev/null 2>&1
 systemctl restart nginx
 
-echo "[12/12] Getting SSL certificate for panel..."
+echo "[12/15] Getting SSL certificate for panel..."
+sleep 5
 systemctl stop nginx
 certbot certonly --standalone -d ${PANEL_DOMAIN} --non-interactive --agree-tos --email admin@${PANEL_DOMAIN} --force-renewal > /dev/null 2>&1
 
-cat > /etc/nginx/sites-available/pterodactyl.conf << 'NGINXSSL'
+if [ -f /etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem ]; then
+    cat > /etc/nginx/sites-available/pterodactyl.conf << 'NGINXSSL'
 server {
-listen 80;
-server_name ${PANEL_DOMAIN};
-return 301 https://\$server_name\$request_uri;
+    listen 80;
+    server_name ${PANEL_DOMAIN};
+    return 301 https://\$server_name\$request_uri;
 }
+
 server {
-listen 443 ssl http2;
-server_name ${PANEL_DOMAIN};
-root /var/www/pterodactyl/public;
-index index.php;
-client_max_body_size 100m;
-ssl_certificate /etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem;
-ssl_certificate_key /etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem;
-ssl_protocols TLSv1.2 TLSv1.3;
-location / { try_files \$uri \$uri/ /index.php?\$query_string; }
-location ~ \.php$ {
-fastcgi_pass unix:/run/php/php8.2-fpm.sock;
-fastcgi_index index.php;
-include fastcgi_params;
-fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-}
+    listen 443 ssl http2;
+    server_name ${PANEL_DOMAIN};
+    root /var/www/pterodactyl/public;
+    index index.php;
+    client_max_body_size 100m;
+    
+    ssl_certificate /etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';
+    
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+    
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
 }
 NGINXSSL
+    sed -i "s/\\\${PANEL_DOMAIN}/${PANEL_DOMAIN}/g" /etc/nginx/sites-available/pterodactyl.conf
+fi
 
 systemctl start nginx
 
-echo "Setting up queue worker..."
-cat > /etc/systemd/system/pteroq.service << 'SERVICE'
+echo "[13/15] Setting up services..."
+cat > /etc/systemd/system/pteroq.service << 'SERVICECONF'
 [Unit]
 Description=Pterodactyl Queue Worker
 After=redis-server.service
+
 [Service]
 User=www-data
 Group=www-data
 Restart=always
 ExecStart=/usr/bin/php /var/www/pterodactyl/artisan queue:work --queue=high,standard,low --sleep=3 --tries=3
+
 [Install]
 WantedBy=multi-user.target
-SERVICE
+SERVICECONF
 
 systemctl enable --now pteroq > /dev/null 2>&1
 (crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
 
-echo "Installing Docker..."
+echo "[14/15] Installing Docker & Wings..."
 curl -sSL https://get.docker.com/ | CHANNEL=stable bash > /dev/null 2>&1
 systemctl enable --now docker > /dev/null 2>&1
-
-echo "Installing Wings..."
 mkdir -p /etc/pterodactyl
 curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64" 2>/dev/null
 chmod u+x /usr/local/bin/wings
 
-echo "Getting SSL certificate for node..."
+echo "[15/15] Getting SSL certificate for node..."
+sleep 5
 systemctl stop nginx
 certbot certonly --standalone -d ${NODE_DOMAIN} --non-interactive --agree-tos --email admin@${PANEL_DOMAIN} --force-renewal > /dev/null 2>&1
-if [ \$? -ne 0 ]; then
+
+if [ ! -f /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem ]; then
     mkdir -p /etc/letsencrypt/live/${NODE_DOMAIN}/
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
       -keyout /etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem \
@@ -461,13 +484,15 @@ if [ \$? -ne 0 ]; then
     chmod 600 /etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem
     chmod 644 /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem
 fi
+
 systemctl start nginx
 
-cat > /etc/systemd/system/wings.service << 'WINGS'
+cat > /etc/systemd/system/wings.service << 'WINGSCONF'
 [Unit]
 Description=Pterodactyl Wings Daemon
 After=docker.service
 Requires=docker.service
+
 [Service]
 User=root
 WorkingDirectory=/etc/pterodactyl
@@ -477,14 +502,15 @@ Restart=on-failure
 StartLimitInterval=180
 StartLimitBurst=30
 RestartSec=5s
+
 [Install]
 WantedBy=multi-user.target
-WINGS
+WINGSCONF
 
 systemctl enable wings > /dev/null 2>&1
 useradd -r -m -d /var/lib/pterodactyl -s /bin/bash pterodactyl > /dev/null 2>&1
 
-cat > /root/pterodactyl_credentials.txt << CRED
+cat > /root/pterodactyl_credentials.txt << CREDFILE
 ========================================
 PTERODACTYL INSTALLATION CREDENTIALS
 ========================================
@@ -496,9 +522,16 @@ Node FQDN: ${NODE_DOMAIN}
 Database Password: ${DB_PASS}
 Installation Date: \$(date)
 ========================================
-CRED
+CREDFILE
 
-echo "Installation completed successfully!"
+echo ""
+echo "========================================="
+echo "INSTALLATION COMPLETED SUCCESSFULLY!"
+echo "========================================="
+echo "Panel URL: https://${PANEL_DOMAIN}"
+echo "Username: ${ADMIN_USER}"
+echo "Password: ${ADMIN_PASS}"
+echo "========================================="
 
 ENDSSH
     
@@ -512,13 +545,18 @@ ENDSSH
         echo -e "${WHITE}Password:  ${CYAN}${ADMIN_PASS}${NC}"
         echo -e "${WHITE}Node FQDN: ${CYAN}${NODE_DOMAIN}${NC}\n"
         echo -e "${YELLOW}Next Steps:${NC}"
-        echo -e "${WHITE}1. Login to panel at: ${CYAN}https://${PANEL_DOMAIN}${NC}"
-        echo -e "${WHITE}2. Go to: ${CYAN}Admin → Locations${NC} and create a location"
-        echo -e "${WHITE}3. Go to: ${CYAN}Admin → Nodes${NC} and create a node with:"
+        echo -e "${WHITE}1. Open browser and go to: ${CYAN}https://${PANEL_DOMAIN}${NC}"
+        echo -e "${WHITE}2. Login with credentials above${NC}"
+        echo -e "${WHITE}3. Go to: ${CYAN}Admin → Locations${NC} and create a location${NC}"
+        echo -e "${WHITE}4. Go to: ${CYAN}Admin → Nodes${NC} and create a node:${NC}"
         echo -e "${WHITE}   - FQDN: ${CYAN}${NODE_DOMAIN}${NC}"
-        echo -e "${WHITE}   - Use SSL: ${GREEN}Yes${NC}"
-        echo -e "${WHITE}4. Get the configuration and save it to: ${CYAN}/etc/pterodactyl/config.yml${NC}"
-        echo -e "${WHITE}5. Start Wings with: ${CYAN}systemctl start wings${NC}\n"
+        echo -e "${WHITE}   - Communicate Over SSL: ${GREEN}Yes${NC}"
+        echo -e "${WHITE}   - Behind Proxy: ${RED}No${NC}"
+        echo -e "${WHITE}5. Copy the configuration from the panel${NC}"
+        echo -e "${WHITE}6. SSH to VPS and run: ${CYAN}nano /etc/pterodactyl/config.yml${NC}"
+        echo -e "${WHITE}7. Paste the configuration and save (Ctrl+X, Y, Enter)${NC}"
+        echo -e "${WHITE}8. Start Wings: ${CYAN}systemctl start wings${NC}"
+        echo -e "${WHITE}9. Check Wings status: ${CYAN}systemctl status wings${NC}\n"
         
         cat > /root/local_pterodactyl_${PANEL_HOST}.txt << LOCALCRED
 ========================================
@@ -539,18 +577,29 @@ DNS Records Created:
 - ${NODE_DOMAIN} -> ${VPS_IP}
 
 Next Steps:
-1. Login to panel at: https://${PANEL_DOMAIN}
-2. Create Location (Admin → Locations)
-3. Create Node with FQDN: ${NODE_DOMAIN}
-4. Copy config to /etc/pterodactyl/config.yml on VPS
-5. Run: systemctl start wings
+1. Open: https://${PANEL_DOMAIN}
+2. Login with credentials above
+3. Create Location (Admin → Locations)
+4. Create Node with FQDN: ${NODE_DOMAIN}
+5. Copy config to /etc/pterodactyl/config.yml on VPS
+6. Run: systemctl start wings
+7. Check: systemctl status wings
+
+SSH Command:
+ssh root@${VPS_IP}
+
+Troubleshooting:
+- Check Nginx: systemctl status nginx
+- Check Panel: systemctl status pteroq
+- Check Wings: systemctl status wings
+- Check Logs: tail -f /var/www/pterodactyl/storage/logs/laravel-*.log
 ========================================
 LOCALCRED
         
         echo -e "${GREEN}[✓] Credentials saved on VPS: ${CYAN}/root/pterodactyl_credentials.txt${NC}"
         echo -e "${GREEN}[✓] Credentials saved locally: ${CYAN}/root/local_pterodactyl_${PANEL_HOST}.txt${NC}\n"
     else
-        echo -e "${RED}[!] Installation failed${NC}\n"
+        echo -e "${RED}[!] Installation failed or incomplete${NC}\n"
     fi
     
     read -p "Press Enter to continue..."
@@ -596,40 +645,51 @@ uninstall_panel() {
     
     sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no root@$VPS_IP bash << 'ENDSSH'
 
-echo "[1/6] Stopping services..."
+echo "[1/8] Stopping services..."
 systemctl stop wings pteroq nginx > /dev/null 2>&1
 systemctl disable wings pteroq > /dev/null 2>&1
 
-echo "[2/6] Removing service files..."
+echo "[2/8] Removing service files..."
 rm -f /etc/systemd/system/wings.service /etc/systemd/system/pteroq.service
 systemctl daemon-reload
 
-echo "[3/6] Stopping and removing Docker containers..."
+echo "[3/8] Stopping Docker containers..."
 docker ps -aq | xargs -r docker stop > /dev/null 2>&1
+
+echo "[4/8] Removing Docker containers..."
 docker ps -aq | xargs -r docker rm > /dev/null 2>&1
 docker system prune -af --volumes > /dev/null 2>&1
 
-echo "[4/6] Removing Pterodactyl files..."
-rm -rf /var/lib/pterodactyl /etc/pterodactyl /usr/local/bin/wings /var/www/pterodactyl
-rm -f /etc/nginx/sites-enabled/pterodactyl.conf /etc/nginx/sites-available/pterodactyl.conf
+echo "[5/8] Removing Pterodactyl files..."
+rm -rf /var/lib/pterodactyl
+rm -rf /etc/pterodactyl
+rm -rf /usr/local/bin/wings
+rm -rf /var/www/pterodactyl
+rm -f /etc/nginx/sites-enabled/pterodactyl.conf
+rm -f /etc/nginx/sites-available/pterodactyl.conf
+
+echo "[6/8] Removing SSL certificates..."
 rm -rf /etc/letsencrypt/live/*/
 rm -rf /etc/letsencrypt/archive/*/
-rm -rf /etc/letsencrypt/renewal/*
+rm -rf /etc/letsencrypt/renewal/*.conf
 
-echo "[5/6] Removing database..."
+echo "[7/8] Removing database..."
 mysql -e "DROP DATABASE IF EXISTS panel;" 2>/dev/null
 mysql -e "DROP USER IF EXISTS 'pterodactyl'@'localhost';" 2>/dev/null
 mysql -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';" 2>/dev/null
 mysql -e "FLUSH PRIVILEGES;" 2>/dev/null
 
-echo "[6/6] Cleaning up..."
+echo "[8/8] Final cleanup..."
 crontab -l 2>/dev/null | grep -v "pterodactyl" | crontab - 2>/dev/null
 userdel -r pterodactyl 2>/dev/null
 rm -f /root/pterodactyl_credentials.txt
 
 systemctl start nginx > /dev/null 2>&1
 
-echo "Uninstallation completed successfully!"
+echo ""
+echo "========================================="
+echo "UNINSTALLATION COMPLETED SUCCESSFULLY!"
+echo "========================================="
 
 ENDSSH
     
@@ -648,20 +708,142 @@ ENDSSH
     read -p "Press Enter to continue..."
 }
 
+fix_installation() {
+    show_banner
+    echo -e "${CYAN}[*] FIX PTERODACTYL INSTALLATION${NC}\n"
+    
+    apt install -y sshpass > /dev/null 2>&1
+    
+    read -p "$(echo -e ${YELLOW}Enter VPS IP Address: ${NC})" VPS_IP
+    
+    if [[ ! $VPS_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}[!] Invalid IP address format${NC}"
+        sleep 2
+        return
+    fi
+    
+    read -sp "$(echo -e ${YELLOW}Enter VPS Root Password: ${NC})" VPS_PASS
+    echo ""
+    
+    echo -e "\n${YELLOW}[~] Testing SSH connection...${NC}"
+    test_ssh_connection "$VPS_IP" "$VPS_PASS"
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}[!] Failed to connect to VPS. Check IP and password${NC}\n"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo -e "${GREEN}[✓] SSH connection successful${NC}\n"
+    
+    read -p "$(echo -e ${YELLOW}Enter Panel Domain (e.g., anossir.storeid.my.id): ${NC})" PANEL_DOMAIN
+    read -p "$(echo -e ${YELLOW}Enter Node Domain (e.g., node.anossir.storeid.my.id): ${NC})" NODE_DOMAIN
+    
+    echo -e "\n${YELLOW}[~] Fixing installation on VPS...${NC}\n"
+    
+    sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no root@$VPS_IP bash << ENDSSH
+
+echo "[1/4] Reconfiguring Nginx..."
+cat > /etc/nginx/sites-available/pterodactyl.conf << 'NGINXFIX'
+server {
+    listen 80;
+    server_name ${PANEL_DOMAIN};
+    return 301 https://\\\$server_name\\\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${PANEL_DOMAIN};
+    root /var/www/pterodactyl/public;
+    index index.php;
+    client_max_body_size 100m;
+    
+    ssl_certificate /etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';
+    
+    location / {
+        try_files \\\$uri \\\$uri/ /index.php?\\\$query_string;
+    }
+    
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \\\$document_root\\\$fastcgi_script_name;
+    }
+}
+NGINXFIX
+
+sed -i "s/\\\${PANEL_DOMAIN}/${PANEL_DOMAIN}/g" /etc/nginx/sites-available/pterodactyl.conf
+
+echo "[2/4] Getting SSL certificates..."
+systemctl stop nginx
+certbot certonly --standalone -d ${PANEL_DOMAIN} --non-interactive --agree-tos --email admin@${PANEL_DOMAIN} --force-renewal > /dev/null 2>&1
+certbot certonly --standalone -d ${NODE_DOMAIN} --non-interactive --agree-tos --email admin@${PANEL_DOMAIN} --force-renewal > /dev/null 2>&1
+
+if [ ! -f /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem ]; then
+    mkdir -p /etc/letsencrypt/live/${NODE_DOMAIN}/
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout /etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem \
+      -out /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem \
+      -subj "/CN=${NODE_DOMAIN}" > /dev/null 2>&1
+    chmod 600 /etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem
+    chmod 644 /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem
+fi
+
+echo "[3/4] Restarting services..."
+systemctl start nginx
+systemctl restart pteroq
+systemctl restart php8.2-fpm
+
+echo "[4/4] Setting permissions..."
+chown -R www-data:www-data /var/www/pterodactyl/*
+chmod -R 755 /var/www/pterodactyl/storage
+chmod -R 755 /var/www/pterodactyl/bootstrap/cache
+
+echo ""
+echo "========================================="
+echo "FIX COMPLETED SUCCESSFULLY!"
+echo "========================================="
+echo "Panel URL: https://${PANEL_DOMAIN}"
+echo "Node FQDN: ${NODE_DOMAIN}"
+echo "========================================="
+echo ""
+echo "Try accessing the panel now!"
+
+ENDSSH
+    
+    if [ $? -eq 0 ]; then
+        echo -e "\n${GREEN}[✓] Installation fixed successfully!${NC}"
+        echo -e "${WHITE}Panel URL: ${CYAN}https://${PANEL_DOMAIN}${NC}"
+        echo -e "${WHITE}Node FQDN: ${CYAN}${NODE_DOMAIN}${NC}\n"
+        echo -e "${YELLOW}Try accessing the panel in your browser now${NC}\n"
+    else
+        echo -e "${RED}[!] Fix failed${NC}\n"
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
 main_menu() {
     while true; do
         show_banner
         echo -e "${CYAN}[1]${NC} Create Subdomain Only"
         echo -e "${CYAN}[2]${NC} Install Panel + Wings"
         echo -e "${CYAN}[3]${NC} Uninstall Pterodactyl"
-        echo -e "${CYAN}[4]${NC} Exit\n"
+        echo -e "${CYAN}[4]${NC} Fix Installation (if panel not accessible)"
+        echo -e "${CYAN}[5]${NC} Exit\n"
         read -p "$(echo -e ${YELLOW}Select option: ${NC})" choice
         
         case $choice in
             1) create_subdomain_menu ;;
             2) install_panel ;;
             3) uninstall_panel ;;
-            4) echo -e "\n${GREEN}Goodbye!${NC}\n"; exit 0 ;;
+            4) fix_installation ;;
+            5) echo -e "\n${GREEN}Goodbye!${NC}\n"; exit 0 ;;
             *) echo -e "${RED}Invalid option!${NC}"; sleep 2 ;;
         esac
     done
