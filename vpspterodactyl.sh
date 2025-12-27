@@ -34,7 +34,7 @@ show_banner() {
  ╚╝ ╩  ╚═╝  ╚═╝╝╚╝╩═╝ ╩ 
 EOF
     echo -e "${PURPLE}────────────────────────────────────────${NC}"
-    echo -e "${WHITE}  PTERODACTYL AUTO INSTALLER V2.0${NC}"
+    echo -e "${WHITE}  PTERODACTYL AUTO INSTALLER V3.0${NC}"
     echo -e "${YELLOW}  Created By: JianOffc${NC}"
     echo -e "${PURPLE}────────────────────────────────────────${NC}\n"
 }
@@ -45,6 +45,13 @@ generate_password() {
 
 generate_username() {
     echo "admin$(tr -dc '0-9' < /dev/urandom | head -c 4)"
+}
+
+test_ssh_connection() {
+    local ip=$1
+    local pass=$2
+    sshpass -p "$pass" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@$ip "exit" > /dev/null 2>&1
+    return $?
 }
 
 create_subdomain() {
@@ -77,13 +84,19 @@ list_domains() {
     echo ""
 }
 
-install_panel() {
+create_subdomain_menu() {
     show_banner
-    echo -e "${CYAN}[*] INSTALL PTERODACTYL PANEL${NC}\n"
+    echo -e "${CYAN}[*] CREATE SUBDOMAIN${NC}\n"
     
     apt install -y jq > /dev/null 2>&1
     
-    VPS_IP=$(curl -s ifconfig.me)
+    read -p "$(echo -e ${YELLOW}Enter VPS IP Address: ${NC})" VPS_IP
+    
+    if [[ ! $VPS_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}[!] Invalid IP address format${NC}"
+        sleep 2
+        return
+    fi
     
     list_domains
     read -p "$(echo -e ${YELLOW}Select domain number: ${NC})" domain_num
@@ -92,6 +105,70 @@ install_panel() {
     
     if [ -z "$SELECTED_DOMAIN" ]; then
         echo -e "${RED}[!] Invalid domain selection${NC}"
+        sleep 2
+        return
+    fi
+    
+    read -p "$(echo -e ${YELLOW}Enter hostname: ${NC})" HOSTNAME
+    
+    echo -e "\n${YELLOW}[~] Creating subdomain...${NC}"
+    create_subdomain "$HOSTNAME" "$VPS_IP" "$SELECTED_DOMAIN"
+    
+    if [ $? -eq 0 ]; then
+        FULL_DOMAIN="${HOSTNAME}.${SELECTED_DOMAIN}"
+        echo -e "${GREEN}[✓] Subdomain created successfully${NC}"
+        echo -e "${WHITE}Domain: ${CYAN}${FULL_DOMAIN}${NC}"
+        echo -e "${WHITE}IP: ${CYAN}${VPS_IP}${NC}\n"
+        
+        cat > /root/subdomain_${HOSTNAME}.txt << SUBINFO
+Domain: ${FULL_DOMAIN}
+IP: ${VPS_IP}
+Created: $(date)
+SUBINFO
+        echo -e "${GREEN}[✓] Info saved to: ${CYAN}/root/subdomain_${HOSTNAME}.txt${NC}\n"
+    else
+        echo -e "${RED}[!] Failed to create subdomain${NC}\n"
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+install_panel() {
+    show_banner
+    echo -e "${CYAN}[*] INSTALL PTERODACTYL PANEL${NC}\n"
+    
+    apt install -y jq sshpass > /dev/null 2>&1
+    
+    read -p "$(echo -e ${YELLOW}Enter VPS IP Address: ${NC})" VPS_IP
+    
+    if [[ ! $VPS_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}[!] Invalid IP address format${NC}"
+        sleep 2
+        return
+    fi
+    
+    read -sp "$(echo -e ${YELLOW}Enter VPS Root Password: ${NC})" VPS_PASS
+    echo ""
+    
+    echo -e "\n${YELLOW}[~] Testing SSH connection...${NC}"
+    test_ssh_connection "$VPS_IP" "$VPS_PASS"
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}[!] Failed to connect to VPS. Check IP and password${NC}\n"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo -e "${GREEN}[✓] SSH connection successful${NC}\n"
+    
+    list_domains
+    read -p "$(echo -e ${YELLOW}Select domain number: ${NC})" domain_num
+    
+    SELECTED_DOMAIN=$(echo "$CLOUDFLARE_ZONES" | jq -r 'keys[]' | sed -n "${domain_num}p")
+    
+    if [ -z "$SELECTED_DOMAIN" ]; then
+        echo -e "${RED}[!] Invalid domain selection${NC}"
+        sleep 2
         return
     fi
     
@@ -118,58 +195,44 @@ install_panel() {
     echo -e "${WHITE}    Username: ${CYAN}${ADMIN_USER}${NC}"
     echo -e "${WHITE}    Password: ${CYAN}${ADMIN_PASS}${NC}\n"
     
-    echo -e "${YELLOW}[~] Installing dependencies...${NC}"
-    export DEBIAN_FRONTEND=noninteractive
-    (
-        apt update -y && apt upgrade -y
-        apt install -y software-properties-common curl apt-transport-https ca-certificates gnupg
-        LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
-        apt update -y
-        apt install -y php8.2 php8.2-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip}
-        curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
-        curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash
-        apt install -y mariadb-server nginx redis-server certbot python3-certbot-nginx
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Dependencies installed${NC}"
+    echo -e "${YELLOW}[~] Installing on remote VPS...${NC}"
     
-    echo -e "${YELLOW}[~] Configuring database...${NC}"
-    (
-        mysql -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';" 2>/dev/null
-        mysql -e "DROP USER IF EXISTS 'pterodactyl'@'localhost';" 2>/dev/null
-        mysql -e "DROP DATABASE IF EXISTS panel;" 2>/dev/null
-        mysql -e "CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';"
-        mysql -e "CREATE DATABASE panel;"
-        mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';"
-        mysql -e "CREATE USER 'pterodactyl'@'localhost' IDENTIFIED BY '${DB_PASS}';"
-        mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'localhost';"
-        mysql -e "FLUSH PRIVILEGES;"
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Database configured${NC}"
-    
-    echo -e "${YELLOW}[~] Downloading panel...${NC}"
-    (
-        mkdir -p /var/www/pterodactyl
-        cd /var/www/pterodactyl
-        curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
-        tar -xzvf panel.tar.gz
-        chmod -R 755 storage/* bootstrap/cache/
-        cp .env.example .env
-        composer install --no-dev --optimize-autoloader --no-interaction
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Panel downloaded${NC}"
-    
-    echo -e "${YELLOW}[~] Configuring panel...${NC}"
-    (
-        cd /var/www/pterodactyl
-        php artisan key:generate --force
-        APPKEY=$(php artisan key:generate --show)
-        cat > .env << EOF
+    sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no root@$VPS_IP << ENDSSH
+export DEBIAN_FRONTEND=noninteractive
+apt update -y && apt upgrade -y > /dev/null 2>&1
+apt install -y software-properties-common curl apt-transport-https ca-certificates gnupg > /dev/null 2>&1
+LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1
+apt update -y > /dev/null 2>&1
+apt install -y php8.2 php8.2-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip} > /dev/null 2>&1
+curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer > /dev/null 2>&1
+curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash > /dev/null 2>&1
+apt install -y mariadb-server nginx redis-server certbot python3-certbot-nginx > /dev/null 2>&1
+
+mysql -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';" 2>/dev/null
+mysql -e "DROP USER IF EXISTS 'pterodactyl'@'localhost';" 2>/dev/null
+mysql -e "DROP DATABASE IF EXISTS panel;" 2>/dev/null
+mysql -e "CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';"
+mysql -e "CREATE DATABASE panel;"
+mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';"
+mysql -e "CREATE USER 'pterodactyl'@'localhost' IDENTIFIED BY '${DB_PASS}';"
+mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'localhost';"
+mysql -e "FLUSH PRIVILEGES;"
+
+mkdir -p /var/www/pterodactyl
+cd /var/www/pterodactyl
+curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz > /dev/null 2>&1
+tar -xzvf panel.tar.gz > /dev/null 2>&1
+chmod -R 755 storage/* bootstrap/cache/
+cp .env.example .env
+composer install --no-dev --optimize-autoloader --no-interaction > /dev/null 2>&1
+
+php artisan key:generate --force > /dev/null 2>&1
+APPKEY=\$(php artisan key:generate --show)
+
+cat > .env << EOF
 APP_ENV=production
 APP_DEBUG=false
-APP_KEY=${APPKEY}
+APP_KEY=\${APPKEY}
 APP_TIMEZONE=UTC
 APP_URL=https://${PANEL_DOMAIN}
 DB_HOST=localhost
@@ -187,48 +250,41 @@ RECAPTCHA_ENABLED=false
 RECAPTCHA_SECRET_KEY=
 RECAPTCHA_WEBSITE_KEY=
 EOF
-        php artisan migrate --seed --force
-        php artisan p:user:make --email=admin@${PANEL_DOMAIN} --username=${ADMIN_USER} --name-first=Admin --name-last=Panel --password=${ADMIN_PASS} --admin=1 --no-interaction
-        chown -R www-data:www-data /var/www/pterodactyl/*
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Panel configured${NC}"
-    
-    echo -e "${YELLOW}[~] Configuring nginx...${NC}"
-    (
-        cat > /etc/nginx/sites-available/pterodactyl.conf << NGINX
+
+php artisan migrate --seed --force > /dev/null 2>&1
+php artisan p:user:make --email=admin@${PANEL_DOMAIN} --username=${ADMIN_USER} --name-first=Admin --name-last=Panel --password=${ADMIN_PASS} --admin=1 --no-interaction > /dev/null 2>&1
+chown -R www-data:www-data /var/www/pterodactyl/*
+
+cat > /etc/nginx/sites-available/pterodactyl.conf << 'NGINX'
 server {
 listen 80;
 server_name ${PANEL_DOMAIN};
 root /var/www/pterodactyl/public;
 index index.php;
 client_max_body_size 100m;
-location / { try_files \$uri \$uri/ /index.php?\$query_string; }
+location / { try_files \\\$uri \\\$uri/ /index.php?\\\$query_string; }
 location ~ \.php$ {
 fastcgi_pass unix:/run/php/php8.2-fpm.sock;
 fastcgi_index index.php;
 include fastcgi_params;
-fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+fastcgi_param SCRIPT_FILENAME \\\$document_root\\\$fastcgi_script_name;
 }
 }
 NGINX
-        rm -f /etc/nginx/sites-enabled/default
-        ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
-        systemctl restart nginx
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Nginx configured${NC}"
-    
-    echo -e "${YELLOW}[~] Getting SSL certificate...${NC}"
-    sleep 10
-    systemctl stop nginx
-    certbot certonly --standalone -d ${PANEL_DOMAIN} --non-interactive --agree-tos --email admin@${PANEL_DOMAIN} --force-renewal > /dev/null 2>&1
-    
-    cat > /etc/nginx/sites-available/pterodactyl.conf << NGINXSSL
+
+rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
+systemctl restart nginx
+
+sleep 10
+systemctl stop nginx
+certbot certonly --standalone -d ${PANEL_DOMAIN} --non-interactive --agree-tos --email admin@${PANEL_DOMAIN} --force-renewal > /dev/null 2>&1
+
+cat > /etc/nginx/sites-available/pterodactyl.conf << 'NGINXSSL'
 server {
 listen 80;
 server_name ${PANEL_DOMAIN};
-return 301 https://\$server_name\$request_uri;
+return 301 https://\\\$server_name\\\$request_uri;
 }
 server {
 listen 443 ssl http2;
@@ -239,21 +295,19 @@ client_max_body_size 100m;
 ssl_certificate /etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem;
 ssl_certificate_key /etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem;
 ssl_protocols TLSv1.2 TLSv1.3;
-location / { try_files \$uri \$uri/ /index.php?\$query_string; }
+location / { try_files \\\$uri \\\$uri/ /index.php?\\\$query_string; }
 location ~ \.php$ {
 fastcgi_pass unix:/run/php/php8.2-fpm.sock;
 fastcgi_index index.php;
 include fastcgi_params;
-fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+fastcgi_param SCRIPT_FILENAME \\\$document_root\\\$fastcgi_script_name;
 }
 }
 NGINXSSL
-    systemctl start nginx
-    echo -e "${GREEN}[✓] SSL configured${NC}"
-    
-    echo -e "${YELLOW}[~] Setting up services...${NC}"
-    (
-        cat > /etc/systemd/system/pteroq.service << 'SERVICE'
+
+systemctl start nginx
+
+cat > /etc/systemd/system/pteroq.service << 'SERVICE'
 [Unit]
 Description=Pterodactyl Queue Worker
 After=redis-server.service
@@ -265,40 +319,31 @@ ExecStart=/usr/bin/php /var/www/pterodactyl/artisan queue:work --queue=high,stan
 [Install]
 WantedBy=multi-user.target
 SERVICE
-        systemctl enable --now pteroq
-        (crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Services configured${NC}"
-    
-    echo -e "${YELLOW}[~] Installing Docker & Wings...${NC}"
-    (
-        curl -sSL https://get.docker.com/ | CHANNEL=stable bash
-        systemctl enable --now docker
-        mkdir -p /etc/pterodactyl
-        curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64"
-        chmod u+x /usr/local/bin/wings
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Docker & Wings installed${NC}"
-    
-    echo -e "${YELLOW}[~] Getting SSL for node...${NC}"
-    sleep 10
-    systemctl stop nginx
-    certbot certonly --standalone -d ${NODE_DOMAIN} --non-interactive --agree-tos --email admin@${PANEL_DOMAIN} --force-renewal > /dev/null 2>&1
-    if [ $? -ne 0 ]; then
-        mkdir -p /etc/letsencrypt/live/${NODE_DOMAIN}/
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-          -keyout /etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem \
-          -out /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem \
-          -subj "/CN=${NODE_DOMAIN}" > /dev/null 2>&1
-        chmod 600 /etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem
-        chmod 644 /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem
-    fi
-    systemctl start nginx
-    echo -e "${GREEN}[✓] Node SSL configured${NC}"
-    
-    cat > /etc/systemd/system/wings.service << 'WINGS'
+
+systemctl enable --now pteroq > /dev/null 2>&1
+(crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
+
+curl -sSL https://get.docker.com/ | CHANNEL=stable bash > /dev/null 2>&1
+systemctl enable --now docker > /dev/null 2>&1
+mkdir -p /etc/pterodactyl
+curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64" > /dev/null 2>&1
+chmod u+x /usr/local/bin/wings
+
+sleep 10
+systemctl stop nginx
+certbot certonly --standalone -d ${NODE_DOMAIN} --non-interactive --agree-tos --email admin@${PANEL_DOMAIN} --force-renewal > /dev/null 2>&1
+if [ \$? -ne 0 ]; then
+    mkdir -p /etc/letsencrypt/live/${NODE_DOMAIN}/
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout /etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem \
+      -out /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem \
+      -subj "/CN=${NODE_DOMAIN}" > /dev/null 2>&1
+    chmod 600 /etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem
+    chmod 644 /etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem
+fi
+systemctl start nginx
+
+cat > /etc/systemd/system/wings.service << 'WINGS'
 [Unit]
 Description=Pterodactyl Wings Daemon
 After=docker.service
@@ -315,100 +360,148 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 WINGS
-    systemctl enable wings
-    useradd -r -m -d /var/lib/pterodactyl -s /bin/bash pterodactyl > /dev/null 2>&1
-    
-    echo -e "\n${PURPLE}────────────────────────────────────────${NC}"
-    echo -e "${GREEN}[✓] INSTALLATION COMPLETE!${NC}"
-    echo -e "${PURPLE}────────────────────────────────────────${NC}\n"
-    echo -e "${WHITE}Panel URL: ${CYAN}https://${PANEL_DOMAIN}${NC}"
-    echo -e "${WHITE}Username:  ${CYAN}${ADMIN_USER}${NC}"
-    echo -e "${WHITE}Password:  ${CYAN}${ADMIN_PASS}${NC}"
-    echo -e "${WHITE}Node FQDN: ${CYAN}${NODE_DOMAIN}${NC}\n"
-    echo -e "${YELLOW}Next steps:${NC}"
-    echo -e "${WHITE}1. Login to panel${NC}"
-    echo -e "${WHITE}2. Create location (Admin → Locations)${NC}"
-    echo -e "${WHITE}3. Create node with FQDN: ${CYAN}${NODE_DOMAIN}${NC}"
-    echo -e "${WHITE}4. Get config and paste to: ${CYAN}/etc/pterodactyl/config.yml${NC}"
-    echo -e "${WHITE}5. Run: ${CYAN}systemctl start wings${NC}\n"
-    
-    cat > /root/pterodactyl_credentials.txt << CRED
+
+systemctl enable wings > /dev/null 2>&1
+useradd -r -m -d /var/lib/pterodactyl -s /bin/bash pterodactyl > /dev/null 2>&1
+
+cat > /root/pterodactyl_credentials.txt << CRED
 Panel URL: https://${PANEL_DOMAIN}
 Username: ${ADMIN_USER}
 Password: ${ADMIN_PASS}
 Node FQDN: ${NODE_DOMAIN}
 VPS IP: ${VPS_IP}
+Database Password: ${DB_PASS}
+Installation Date: \$(date)
 CRED
-    echo -e "${GREEN}[✓] Credentials saved to: ${CYAN}/root/pterodactyl_credentials.txt${NC}\n"
+
+ENDSSH
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}[✓] Installation completed successfully${NC}\n"
+        echo -e "${PURPLE}────────────────────────────────────────${NC}"
+        echo -e "${GREEN}[✓] INSTALLATION COMPLETE!${NC}"
+        echo -e "${PURPLE}────────────────────────────────────────${NC}\n"
+        echo -e "${WHITE}VPS IP:    ${CYAN}${VPS_IP}${NC}"
+        echo -e "${WHITE}Panel URL: ${CYAN}https://${PANEL_DOMAIN}${NC}"
+        echo -e "${WHITE}Username:  ${CYAN}${ADMIN_USER}${NC}"
+        echo -e "${WHITE}Password:  ${CYAN}${ADMIN_PASS}${NC}"
+        echo -e "${WHITE}Node FQDN: ${CYAN}${NODE_DOMAIN}${NC}\n"
+        echo -e "${YELLOW}Next steps:${NC}"
+        echo -e "${WHITE}1. Login to panel${NC}"
+        echo -e "${WHITE}2. Create location (Admin → Locations)${NC}"
+        echo -e "${WHITE}3. Create node with FQDN: ${CYAN}${NODE_DOMAIN}${NC}"
+        echo -e "${WHITE}4. Get config and paste to: ${CYAN}/etc/pterodactyl/config.yml${NC}"
+        echo -e "${WHITE}5. Run: ${CYAN}systemctl start wings${NC}\n"
+        echo -e "${GREEN}[✓] Credentials saved on VPS: ${CYAN}/root/pterodactyl_credentials.txt${NC}\n"
+        
+        cat > /root/local_pterodactyl_${PANEL_HOST}.txt << LOCALCRED
+VPS IP: ${VPS_IP}
+Panel URL: https://${PANEL_DOMAIN}
+Username: ${ADMIN_USER}
+Password: ${ADMIN_PASS}
+Node FQDN: ${NODE_DOMAIN}
+VPS Root Password: ${VPS_PASS}
+Installation Date: $(date)
+LOCALCRED
+        echo -e "${GREEN}[✓] Credentials saved locally: ${CYAN}/root/local_pterodactyl_${PANEL_HOST}.txt${NC}\n"
+    else
+        echo -e "${RED}[!] Installation failed${NC}\n"
+    fi
+    
+    read -p "Press Enter to continue..."
 }
 
 uninstall_panel() {
     show_banner
     echo -e "${RED}[!] UNINSTALL PTERODACTYL${NC}\n"
-    read -p "$(echo -e ${YELLOW}Are you sure? [y/N]: ${NC})" confirm
     
-    if [[ ! $confirm =~ ^[Yy]$ ]]; then
-        echo -e "${GREEN}[✓] Cancelled${NC}"
+    apt install -y sshpass > /dev/null 2>&1
+    
+    read -p "$(echo -e ${YELLOW}Enter VPS IP Address: ${NC})" VPS_IP
+    
+    if [[ ! $VPS_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}[!] Invalid IP address format${NC}"
+        sleep 2
         return
     fi
     
-    echo -e "${YELLOW}[~] Removing services...${NC}"
-    (
-        systemctl stop wings pteroq
-        systemctl disable wings pteroq
-        rm -f /etc/systemd/system/wings.service /etc/systemd/system/pteroq.service
-        systemctl daemon-reload
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Services removed${NC}"
+    read -sp "$(echo -e ${YELLOW}Enter VPS Root Password: ${NC})" VPS_PASS
+    echo ""
     
-    echo -e "${YELLOW}[~] Removing Docker containers...${NC}"
-    (
-        docker ps -aq | xargs -r docker stop
-        docker ps -aq | xargs -r docker rm
-        docker system prune -af
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Docker cleaned${NC}"
+    echo -e "\n${YELLOW}[~] Testing SSH connection...${NC}"
+    test_ssh_connection "$VPS_IP" "$VPS_PASS"
     
-    echo -e "${YELLOW}[~] Removing files...${NC}"
-    (
-        rm -rf /var/lib/pterodactyl /etc/pterodactyl /usr/local/bin/wings /var/www/pterodactyl
-        rm -f /etc/nginx/sites-enabled/pterodactyl.conf /etc/nginx/sites-available/pterodactyl.conf
-        systemctl reload nginx
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Files removed${NC}"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}[!] Failed to connect to VPS. Check IP and password${NC}\n"
+        read -p "Press Enter to continue..."
+        return
+    fi
     
-    echo -e "${YELLOW}[~] Removing database...${NC}"
-    (
-        mysql -e "DROP DATABASE IF EXISTS panel;" 2>/dev/null
-        mysql -e "DROP USER IF EXISTS 'pterodactyl'@'localhost';" 2>/dev/null
-        mysql -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';" 2>/dev/null
-        mysql -e "FLUSH PRIVILEGES;"
-    ) > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}[✓] Database removed${NC}"
+    echo -e "${GREEN}[✓] SSH connection successful${NC}\n"
     
-    crontab -l | grep -v "pterodactyl" | crontab - 2>/dev/null
-    userdel -r pterodactyl 2>/dev/null
+    read -p "$(echo -e ${RED}Are you sure? This will delete everything! [y/N]: ${NC})" confirm
     
-    echo -e "\n${GREEN}[✓] Pterodactyl uninstalled!${NC}\n"
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        echo -e "${GREEN}[✓] Cancelled${NC}"
+        sleep 2
+        return
+    fi
+    
+    echo -e "\n${YELLOW}[~] Uninstalling from remote VPS...${NC}"
+    
+    sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no root@$VPS_IP << 'ENDSSH'
+systemctl stop wings pteroq > /dev/null 2>&1
+systemctl disable wings pteroq > /dev/null 2>&1
+rm -f /etc/systemd/system/wings.service /etc/systemd/system/pteroq.service
+systemctl daemon-reload
+
+docker ps -aq | xargs -r docker stop > /dev/null 2>&1
+docker ps -aq | xargs -r docker rm > /dev/null 2>&1
+docker system prune -af > /dev/null 2>&1
+
+rm -rf /var/lib/pterodactyl /etc/pterodactyl /usr/local/bin/wings /var/www/pterodactyl
+rm -f /etc/nginx/sites-enabled/pterodactyl.conf /etc/nginx/sites-available/pterodactyl.conf
+systemctl reload nginx > /dev/null 2>&1
+
+mysql -e "DROP DATABASE IF EXISTS panel;" 2>/dev/null
+mysql -e "DROP USER IF EXISTS 'pterodactyl'@'localhost';" 2>/dev/null
+mysql -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';" 2>/dev/null
+mysql -e "FLUSH PRIVILEGES;"
+
+crontab -l | grep -v "pterodactyl" | crontab - 2>/dev/null
+userdel -r pterodactyl 2>/dev/null
+
+rm -f /root/pterodactyl_credentials.txt
+
+ENDSSH
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}[✓] Pterodactyl uninstalled successfully${NC}\n"
+        echo -e "${WHITE}VPS IP: ${CYAN}${VPS_IP}${NC}\n"
+    else
+        echo -e "${RED}[!] Uninstallation failed${NC}\n"
+    fi
+    
+    read -p "Press Enter to continue..."
 }
 
 main_menu() {
-    show_banner
-    echo -e "${CYAN}[1]${NC} Install Panel + Wings"
-    echo -e "${CYAN}[2]${NC} Uninstall Pterodactyl"
-    echo -e "${CYAN}[3]${NC} Exit\n"
-    read -p "$(echo -e ${YELLOW}Select option: ${NC})" choice
-    
-    case $choice in
-        1) install_panel ;;
-        2) uninstall_panel ;;
-        3) echo -e "${GREEN}Goodbye!${NC}"; exit 0 ;;
-        *) echo -e "${RED}Invalid option!${NC}"; sleep 2; main_menu ;;
-    esac
+    while true; do
+        show_banner
+        echo -e "${CYAN}[1]${NC} Create Subdomain Only"
+        echo -e "${CYAN}[2]${NC} Install Panel + Wings"
+        echo -e "${CYAN}[3]${NC} Uninstall Pterodactyl"
+        echo -e "${CYAN}[4]${NC} Exit\n"
+        read -p "$(echo -e ${YELLOW}Select option: ${NC})" choice
+        
+        case $choice in
+            1) create_subdomain_menu ;;
+            2) install_panel ;;
+            3) uninstall_panel ;;
+            4) echo -e "${GREEN}Goodbye!${NC}"; exit 0 ;;
+            *) echo -e "${RED}Invalid option!${NC}"; sleep 2 ;;
+        esac
+    done
 }
 
 if [ "$EUID" -ne 0 ]; then
