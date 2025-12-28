@@ -88,6 +88,27 @@ install_panel() {
     echo ""
     
     read -p "$(echo -e ${CYAN}Masukkan IP VPS: ${NC})" IPVPS
+    read -sp "$(echo -e ${CYAN}Masukkan Password VPS: ${NC})" PWVPS
+    echo ""
+    
+    echo ""
+    echo -e "${YELLOW}Pilih Domain:${NC}"
+    echo -e "${GREEN}1.${NC} pterodactyl-panel.web.id"
+    echo -e "${GREEN}2.${NC} storedigital.web.id"
+    echo -e "${GREEN}3.${NC} storeid.my.id"
+    echo -e "${GREEN}4.${NC} xyro.web.id"
+    echo -e "${GREEN}5.${NC} xyroku.my.id"
+    echo -e "${GREEN}6.${NC} gacorr.biz.id"
+    echo -e "${GREEN}7.${NC} cafee.my.id"
+    echo -e "${GREEN}8.${NC} pterodaytl.my.id"
+    echo -e "${GREEN}9.${NC} googlex.my.id"
+    echo -e "${GREEN}10.${NC} heavencraft.my.id"
+    echo -e "${GREEN}11.${NC} hilman-store.web.id"
+    echo -e "${GREEN}12.${NC} hilmanofficial.tech"
+    echo -e "${GREEN}13.${NC} hilmanzoffc.web.id"
+    echo -e "${GREEN}14.${NC} host-panel.web.id"
+    echo -e "${GREEN}15.${NC} hostingers-vvip.my.id"
+    echo ""
     read -p "$(echo -e ${CYAN}Pilih domain \(1-15\): ${NC})" DOMAIN_CHOICE
     
     DOMAINS=("pterodactyl-panel.web.id" "storedigital.web.id" "storeid.my.id" "xyro.web.id" "xyroku.my.id" "gacorr.biz.id" "cafee.my.id" "pterodaytl.my.id" "googlex.my.id" "heavencraft.my.id" "hilman-store.web.id" "hilmanofficial.tech" "hilmanzoffc.web.id" "host-panel.web.id" "hostingers-vvip.my.id")
@@ -95,10 +116,10 @@ install_panel() {
     MAIN_DOMAIN=${DOMAINS[$((DOMAIN_CHOICE-1))]}
     
     read -p "$(echo -e ${CYAN}Masukkan subdomain panel: ${NC})" SUBDOMAIN_PANEL
-    read -p "$(echo -e ${CYAN}Masukkan subdomain node: ${NC})" SUBDOMAIN_NODE
+    read -p "$(echo -e ${CYAN}Masukkan RAM Server \(MB\): ${NC})" RAM_SERVER
     
     DOMAIN_PANEL="${SUBDOMAIN_PANEL}.${MAIN_DOMAIN}"
-    DOMAIN_NODE="${SUBDOMAIN_NODE}.${MAIN_DOMAIN}"
+    DOMAIN_NODE="node.${SUBDOMAIN_PANEL}.${MAIN_DOMAIN}"
     
     PASSWORD_ADMIN=$(random_pass)
     
@@ -107,87 +128,110 @@ install_panel() {
     create_subdomain "$SUBDOMAIN_PANEL" "$MAIN_DOMAIN" "$IPVPS"
     
     loading_bar 2 "Membuat subdomain node"
-    create_subdomain "$SUBDOMAIN_NODE" "$MAIN_DOMAIN" "$IPVPS"
+    create_subdomain "node.${SUBDOMAIN_PANEL}" "$MAIN_DOMAIN" "$IPVPS"
     
     echo ""
     echo -e "${GREEN}┌─────────────────────────────────────────┐${NC}"
-    echo -e "${GREEN}│${NC}  ${CYAN}MEMULAI INSTALASI PANEL${NC}            ${GREEN}│${NC}"
+    echo -e "${GREEN}│${NC}  ${CYAN}MEMULAI INSTALASI VIA SSH${NC}          ${GREEN}│${NC}"
     echo -e "${GREEN}└─────────────────────────────────────────┘${NC}"
     echo ""
     
-    loading_bar 3 "Mengunduh script installer"
-    
-    (
-        bash <(curl -s https://pterodactyl-installer.se) <<EOF
-0
-y
+    sshpass -p "$PWVPS" ssh -o StrictHostKeyChecking=no root@$IPVPS << ENDSSH
+apt-get update -y
+apt-get install -y expect
 
-admin
-admin
-Asia/Jakarta
-admin@gmail.com
-admin@gmail.com
-admin
-admin
-admin
-${PASSWORD_ADMIN}
-${DOMAIN_PANEL}
-y
-y
-1
-y
-y
-y
-A
+expect << 'EOF'
+set timeout -1
+spawn bash <(curl -s https://pterodactyl-installer.se)
+expect "Input 0-6"
+send "0\r"
+expect "(y/N)"
+send "y\r"
+expect "Database name (panel)"
+send "\r"
+expect "Database username (pterodactyl)"
+send "admin\r"
+expect "Password (press enter to use randomly generated password)"
+send "admin\r"
+expect "Select timezone"
+send "Asia/Jakarta\r"
+expect "Provide the email address"
+send "admin@gmail.com\r"
+expect "Email address for the initial admin account"
+send "admin@gmail.com\r"
+expect "Username for the initial admin account"
+send "admin\r"
+expect "First name for the initial admin account"
+send "admin\r"
+expect "Last name for the initial admin account"
+send "admin\r"
+expect "Password for the initial admin account"
+send "${PASSWORD_ADMIN}\r"
+expect "Set the FQDN of this panel"
+send "${DOMAIN_PANEL}\r"
+expect "Do you want to automatically configure UFW"
+send "y\r"
+expect "Do you want to automatically configure HTTPS"
+send "y\r"
+expect "Select the appropriate number"
+send "1\r"
+expect "I agree that this HTTPS request is performed"
+send "y\r"
+expect "Proceed anyways"
+send "y\r"
+expect "(yes/no)"
+send "y\r"
+expect "Initial configuration completed"
+send "y\r"
+expect "Still assume SSL"
+send "y\r"
+expect "Please read the Terms of Service"
+send "y\r"
+expect "(A)gree/(C)ancel:"
+send "A\r"
+expect eof
 EOF
-    ) &
-    spinner $! "Menginstall Panel Pterodactyl"
-    
-    sleep 5
-    
-    echo ""
-    echo -e "${GREEN}┌─────────────────────────────────────────┐${NC}"
-    echo -e "${GREEN}│${NC}  ${CYAN}MEMULAI INSTALASI WINGS${NC}            ${GREEN}│${NC}"
-    echo -e "${GREEN}└─────────────────────────────────────────┘${NC}"
-    echo ""
-    
-    (
-        bash <(curl -s https://pterodactyl-installer.se) <<EOF
-1
-y
-${DOMAIN_PANEL}
-admin
-admin
-${DOMAIN_NODE}
-admin@gmail.com
+
+expect << 'EOF'
+set timeout -1
+spawn bash <(curl -s https://pterodactyl-installer.se)
+expect "Input 0-6"
+send "1\r"
+expect "(y/N)"
+send "y\r"
+expect "Enter the panel address"
+send "${DOMAIN_PANEL}\r"
+expect "Database host username"
+send "admin\r"
+expect "Database host password"
+send "admin\r"
+expect "Set the FQDN to use for Let's Encrypt"
+send "${DOMAIN_NODE}\r"
+expect "Enter email address for Let's Encrypt"
+send "admin@gmail.com\r"
+expect eof
 EOF
-    ) &
-    spinner $! "Menginstall Wings Pterodactyl"
-    
-    sleep 5
-    
-    echo ""
-    echo -e "${GREEN}┌─────────────────────────────────────────┐${NC}"
-    echo -e "${GREEN}│${NC}  ${CYAN}MEMBUAT NODE PTERODACTYL${NC}           ${GREEN}│${NC}"
-    echo -e "${GREEN}└─────────────────────────────────────────┘${NC}"
-    echo ""
-    
-    read -p "$(echo -e ${CYAN}Masukkan RAM Server \(MB\): ${NC})" RAM_SERVER
-    
-    (
-        bash <(curl -s https://raw.githubusercontent.com/SkyzoOffc/Pterodactyl-Theme-Autoinstaller/main/createnode.sh) <<EOF
-Singapore
-Node By JianCode
-${DOMAIN_NODE}
-JianNode
-${RAM_SERVER}
-${RAM_SERVER}
-1
+
+expect << 'EOF'
+set timeout -1
+spawn bash <(curl -s https://raw.githubusercontent.com/SkyzoOffc/Pterodactyl-Theme-Autoinstaller/main/createnode.sh)
+expect "Masukkan nama lokasi:"
+send "Singapore\r"
+expect "Masukkan deskripsi lokasi:"
+send "Node By JianCode\r"
+expect "Masukkan domain:"
+send "${DOMAIN_NODE}\r"
+expect "Masukkan nama node:"
+send "JianNode\r"
+expect "Masukkan RAM (dalam MB):"
+send "${RAM_SERVER}\r"
+expect "Masukkan jumlah maksimum disk space (dalam MB):"
+send "${RAM_SERVER}\r"
+expect "Masukkan Locid:"
+send "1\r"
+expect eof
 EOF
-    ) &
-    spinner $! "Membuat Node Pterodactyl"
-    
-    sleep 3
+ENDSSH
     
     clear
     show_ascii
@@ -213,6 +257,10 @@ uninstall_panel() {
     echo -e "${RED}└─────────────────────────────────────────┘${NC}"
     echo ""
     
+    read -p "$(echo -e ${CYAN}Masukkan IP VPS: ${NC})" IPVPS
+    read -sp "$(echo -e ${CYAN}Masukkan Password VPS: ${NC})" PWVPS
+    echo ""
+    
     read -p "$(echo -e ${YELLOW}Yakin ingin uninstall? \(y/n\): ${NC})" CONFIRM
     
     if [ "$CONFIRM" != "y" ]; then
@@ -223,16 +271,19 @@ uninstall_panel() {
     echo ""
     loading_bar 2 "Memulai proses uninstall"
     
-    (
-        bash <(curl -s https://pterodactyl-installer.se) <<EOF
-6
-y
-
+    sshpass -p "$PWVPS" ssh -o StrictHostKeyChecking=no root@$IPVPS << 'ENDSSH'
+expect << 'EOF'
+set timeout -1
+spawn bash <(curl -s https://pterodactyl-installer.se)
+expect "Input 0-6"
+send "6\r"
+expect "(y/N)"
+send "y\r"
+expect "Choose the panel database"
+send "\r"
+expect eof
 EOF
-    ) &
-    spinner $! "Menghapus Panel Pterodactyl"
-    
-    sleep 3
+ENDSSH
     
     clear
     show_ascii
@@ -279,6 +330,11 @@ main_menu() {
 if ! command -v jq &> /dev/null; then
     echo -e "${YELLOW}Installing jq...${NC}"
     apt-get update -y && apt-get install -y jq
+fi
+
+if ! command -v sshpass &> /dev/null; then
+    echo -e "${YELLOW}Installing sshpass...${NC}"
+    apt-get update -y && apt-get install -y sshpass
 fi
 
 main_menu
